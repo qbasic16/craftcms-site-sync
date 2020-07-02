@@ -2,9 +2,9 @@
 namespace timkelty\craftcms\sitesync\models;
 
 use Craft;
-use craft\events\ModelEvent;
 use craft\base\Element;
 use craft\base\Field;
+use craft\events\ModelEvent;
 use craft\helpers\ElementHelper;
 use timkelty\craftcms\sitesync\Field as SiteSyncField;
 
@@ -74,7 +74,7 @@ class Syncable extends \craft\base\Model
             return null;
         }
 
-        $fields = array_filter($layout->getFields(), function($field) {
+        $fields = array_filter($layout->getFields(), function ($field) {
             return $field instanceof SiteSyncField;
         });
         $field = array_shift($fields);
@@ -96,7 +96,7 @@ class Syncable extends \craft\base\Model
     {
         $siteIds = $this->getSiteIdsForElement($this->element);
 
-        $propagated = array_map(function($siteId) {
+        $propagated = array_map(function ($siteId) {
             return $this->propagateToSite($siteId);
         }, $siteIds);
 
@@ -124,10 +124,11 @@ class Syncable extends \craft\base\Model
             return false;
         }
 
-		if (\array_key_exists('fields', $updates)) {
+        if (\array_key_exists('fields', $updates)) {
             $siteElement->setFieldValues($updates['fields']);
             unset($updates['fields']);
-		}
+        }
+
         Craft::configure($siteElement, $updates);
 
         // Don't bother validating custom fields for other sites
@@ -174,13 +175,22 @@ class Syncable extends \craft\base\Model
 
         if ($this->hasSource(self::SOURCE_FIELDS)) {
             $updates['fields'] = [];
-            if ($this->overwrite) {
-                $updates['fields'] = $this->element->getFieldValues();
-            } else {
-                foreach ($this->getTranslatableFieldHandles($this->element) as $handle) {
-                    if ($savedElement->getSerializedFieldValues([$handle]) === $siteElement->getSerializedFieldValues([$handle])) {
-                        $updates['fields'][$handle] = $this->element->{$handle};
+
+            foreach ($this->getTranslatableFields($this->element) as $field) {
+
+                // Handle Matrix/SuperTable when overwrite is enabled
+                if ($this->overwrite) {
+                    if ($field instanceof \craft\fields\Matrix) {
+                        Craft::$app->getMatrix()->duplicateBlocks($field, $this->element, $siteElement);
+                        continue;
+                    } elseif ($field instanceof \verbb\supertable\fields\SuperTableField) {
+                        \verbb\supertable\SuperTable::$plugin->getService()->duplicateBlocks($field, $this->element, $siteElement);
+                        continue;
                     }
+                }
+
+                if ($this->overwrite || $savedElement->getSerializedFieldValues([$field->handle]) === $siteElement->getSerializedFieldValues([$field->handle])) {
+                    $updates['fields'][$field->handle] = $this->element->getFieldValue($field->handle);
                 }
             }
         }
@@ -200,16 +210,14 @@ class Syncable extends \craft\base\Model
         return $updates;
     }
 
-    private function getTranslatableFieldHandles(Element $element): array
+    private function getTranslatableFields(Element $element): array
     {
-        return array_map(function(Field $field) {
-            return $field->handle;
-        }, array_filter($element->getFieldLayout()->getFields(), function(Field $field) {
+        return array_filter($element->getFieldLayout()->getFields(), function (Field $field) {
             return $field->translationMethod === $field::TRANSLATION_METHOD_SITE;
 
             // TODO: does this make more sense?
             // return $field->getIsTranslatable();
-        }));
+        });
     }
 
     /**
